@@ -1,0 +1,8 @@
+ollama
+pandas
+streamlit
+chromadb
+langchain
+langchain-chroma
+langchain-community
+sentence-transformers

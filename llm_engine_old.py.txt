@@ -1,0 +1,231 @@
+import json
+import ollama
+import re
+
+MODEL_NAME = "llama3"
+
+
+def call_llm(prompt):
+    response = ollama.chat(
+        model=MODEL_NAME,
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a senior QA engineer. Return only valid JSON."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+    )
+
+    return response["message"]["content"]
+
+
+# def safe_json_parse(text):
+#     try:
+#         return json.loads(text)
+#     except Exception:
+#         start = text.find("[")
+#         end = text.rfind("]") + 1
+#         return json.loads(text[start:end])
+
+
+
+def safe_json_parse(text):
+    if not text or not text.strip():
+        raise ValueError("LLM returned empty response")
+
+    text = text.strip()
+
+    # Remove markdown JSON fences
+    text = re.sub(r"^```json\s*", "", text)
+    text = re.sub(r"^```\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+
+    # Extract JSON array or object
+    start_array = text.find("[")
+    start_obj = text.find("{")
+
+    if start_array == -1 and start_obj == -1:
+        raise ValueError(f"No JSON found in LLM response:\n{text}")
+
+    if start_array == -1:
+        start = start_obj
+    elif start_obj == -1:
+        start = start_array
+    else:
+        start = min(start_array, start_obj)
+
+    end_array = text.rfind("]")
+    end_obj = text.rfind("}")
+
+    end = max(end_array, end_obj) + 1
+
+    json_text = text[start:end]
+
+    # Remove trailing commas before ] or }
+    json_text = re.sub(r",\s*([\]}])", r"\1", json_text)
+
+    try:
+        return json.loads(json_text)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"Invalid JSON returned by LLM:\n\n{json_text}\n\nOriginal error: {e}"
+        )
+
+
+# def extract_requirements(brd_text):
+#     prompt = f"""
+# Extract atomic requirements from this BRD.
+
+# BRD:
+# {brd_text}
+
+# Return JSON only:
+
+# [
+#   {{
+#     "requirement_id": "REQ_001",
+#     "requirement_text": "...",
+#     "requirement_type": "Functional/Validation/Business Rule/Security",
+#     "priority": "High/Medium/Low"
+#   }}
+# ]
+# """
+#     return safe_json_parse(call_llm(prompt))
+
+# def extract_requirements(brd_text):
+#     prompt = f"""
+# You are a requirements extraction engine.
+
+# Extract functional and non-functional requirements from the BRD below.
+
+# Return ONLY valid JSON.
+# Do not include markdown.
+# Do not include explanation.
+# Do not use trailing commas.
+
+# JSON format:
+# [
+#   {{
+#     "id": "REQ-001",
+#     "type": "Functional",
+#     "requirement": "The system shall ...",
+#     "priority": "High"
+#   }}
+# ]
+
+# BRD:
+# {brd_text}
+# """
+#     return safe_json_parse(call_llm(prompt))
+
+
+# def generate_llm_test_cases(requirements):
+#     prompt = f"""
+# Generate test cases from these requirements:
+
+# {json.dumps(requirements, indent=2)}
+
+# Return JSON only:
+
+# [
+#   {{
+#     "test_case_id": "TC_001",
+#     "requirement_id": "REQ_001",
+#     "scenario": "...",
+#     "test_type": "Positive/Negative/Boundary",
+#     "preconditions": "...",
+#     "steps": ["step 1", "step 2"],
+#     "test_data": {{}},
+#     "expected_result": "...",
+#     "priority": "High/Medium/Low"
+#   }}
+# ]
+# """
+#     return safe_json_parse(call_llm(prompt))
+
+def generate_test_cases_for_requirement(req):
+    req_id = (
+        req.get("requirement_id")
+        or req.get("id")
+        or req.get("req_id")
+        or "REQ_UNKNOWN"
+    )
+
+    req_text = (
+        req.get("requirement_text")
+        or req.get("description")
+        or req.get("text")
+        or req.get("requirement")
+        or ""
+    )
+
+    prompt = f"""
+You are a senior QA architect.
+
+Generate a LARGE and exhaustive set of test cases for this single requirement.
+
+Requirement ID: {req_id}
+Requirement Text: {req_text}
+
+Generate test cases across all applicable categories:
+
+1. Positive test cases
+2. Negative test cases
+3. Boundary value tests
+4. Equivalence partition tests
+5. Decision table tests
+6. Field validation tests
+7. Mandatory field tests
+8. Format validation tests
+9. Duplicate data tests
+10. Security tests
+11. Authorization tests
+12. Error handling tests
+13. Workflow tests
+14. Data persistence tests
+15. API validation tests
+16. UI validation tests
+17. Edge cases
+18. Regression tests
+
+Return ONLY valid JSON.
+
+Format:
+
+[
+  {{
+    "test_case_id": "TC_{req_id}_001",
+    "requirement_id": "{req_id}",
+    "scenario": "...",
+    "test_type": "Positive/Negative/Boundary/Security/API/UI/Workflow/Regression",
+    "preconditions": "...",
+    "steps": ["step 1", "step 2"],
+    "test_data": {{}},
+    "expected_result": "...",
+    "priority": "High/Medium/Low"
+  }}
+]
+
+Generate at least 15 to 25 test cases for this requirement if possible.
+Do not stop at obvious cases.
+"""
+    return safe_json_parse(call_llm(prompt))
+
+
+def generate_exhaustive_llm_test_cases(requirements):
+    all_test_cases = []
+
+    for index, req in enumerate(requirements, start=1):
+        print(f"Generating exhaustive test cases for requirement {index}/{len(requirements)}...")
+
+        try:
+            cases = generate_test_cases_for_requirement(req)
+            all_test_cases.extend(cases)
+        except Exception as e:
+            print(f"Failed for requirement {index}: {e}")
+
+    return all_test_cases
